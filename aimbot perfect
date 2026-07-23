@@ -321,13 +321,12 @@ local function arStop()
 end
 
 -- ═══════════════════════════════════════════════
--- HITBOX EXPANDER (Agressivo & Ultra-Preciso)
+-- HITBOX EXPANDER (Stealth & Anti-Detection)
 -- ═══════════════════════════════════════════════
 local _hbShadows    = {}
 local _hbOrigSz     = {}
 local _hbConns      = {}
 local _hbPlayerConn = nil
-local _hbLoopConn   = nil
 
 local function _hbApply(char)
     if not char or not char.Parent then return end
@@ -348,7 +347,7 @@ local function _hbApply(char)
     elseif targetChoice == "Torso" then
         partsToExpand = { "Torso", "UpperTorso", "LowerTorso" }
     elseif targetChoice == "RootPart" then
-        partsToExpand = { "HumanoidRootPart", "Torso", "UpperTorso" }
+        partsToExpand = { "Torso", "UpperTorso" }
     else -- "All"
         partsToExpand = { "Head", "Torso", "UpperTorso", "LowerTorso" }
     end
@@ -366,13 +365,11 @@ local function _hbApply(char)
             end
 
             pcall(function()
-                if p.Size.X ~= base or p.Size.Y ~= base or p.Size.Z ~= base then
-                    p.Size = V3new(base, base, base)
-                end
-                if not p.Massless then p.Massless = true end
-                if p.CanCollide then p.CanCollide = false end
-                if not p.CanTouch then p.CanTouch = true end
-                if p.Transparency ~= 0.5 then p.Transparency = 0.5 end
+                p.Massless     = true
+                p.CanCollide   = false
+                p.CanTouch     = true
+                p.Size         = V3new(base, base, base)
+                p.Transparency = 0.5
             end)
         end
     end
@@ -438,13 +435,6 @@ end
 local function hitboxStart()
     CFG.HitboxOn = true
     _hbApplyAll()
-
-    if not _hbLoopConn then
-        _hbLoopConn = Run.Heartbeat:Connect(function()
-            if not CFG.HitboxOn then return end
-            _hbApplyAll()
-        end)
-    end
 
     if not _hbPlayerConn then
         _hbPlayerConn = Players.PlayerAdded:Connect(function(pl)
@@ -1309,9 +1299,6 @@ local function getAimTarget()
     return _aimBest
 end
 
-local VIM = nil
-pcall(function() VIM = game:GetService("VirtualInputManager") end)
-
 local function _getCrosshairTarget()
     local camPos = Cam.CFrame.Position
     local camDir = Cam.CFrame.LookVector * 2000
@@ -1376,16 +1363,6 @@ local function _doClick()
                 mouse1press()
                 task.wait(0.01)
                 mouse1release()
-            elseif VIM then
-                local cx, cy = Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y * 0.5
-                VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                task.wait(0.01)
-                VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-            elseif VirtualUser then
-                local vp = V2new(Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y * 0.5)
-                VirtualUser:Button1Down(vp, Cam.CFrame)
-                task.wait(0.01)
-                VirtualUser:Button1Up(vp, Cam.CFrame)
             end
         end
 
