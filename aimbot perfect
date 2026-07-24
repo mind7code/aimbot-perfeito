@@ -1,6 +1,6 @@
 --[[
-    AIMBOT + HITBOX + ESP + FLY — v5.7 Anti-Detect (Xeno Compatível)
-    Melhorias: SpeedHack via BodyVelocity, Humanizer, Nomes Ofuscados
+    AIMBOT + HITBOX + ESP + FLY — v5.7.1 Xeno (Fly Corrigido + Completo)
+    Compatível com Xeno | Anti-Detect | Todas as funcionalidades
 --]]
 
 -- Serviços
@@ -19,8 +19,8 @@ if not SafeParent then pcall(function() SafeParent = game:GetService("CoreGui") 
 if not SafeParent then SafeParent = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui") end
 
 -- Anti-Duplicacao
-local PAINEL_NOME = "System v5.7"
-local _GKEY = "_SYS_V57"
+local PAINEL_NOME = "System v5.7.1"
+local _GKEY = "_SYS_V571"
 if getgenv and getgenv()[_GKEY] then pcall(getgenv()[_GKEY]); getgenv()[_GKEY] = nil end
 
 -- Configuracoes
@@ -38,7 +38,6 @@ local CFG = {
     CrosshairOn = false, CrosshairSize = 8, CrosshairColor = Color3.fromRGB(0, 255, 200),
     ESPToolOn = false, ESPToolColor = Color3.fromRGB(255, 215, 0),
     ESPInvOn = false, ESPMaxDist = 600, ZoomDist = 400,
-    -- Anti-Detect: Humanizer
     Humanizer = true, HumanizerDelay = 0.25,
 }
 
@@ -48,7 +47,7 @@ local KEYS = {
     Noclip = Enum.KeyCode.N, CarBoost = Enum.KeyCode.X,
 }
 
--- Tema (nomes ofuscados)
+-- Tema
 local T = {
     BG = Color3.fromRGB(255, 255, 255), Sidebar = Color3.fromRGB(244, 245, 248),
     Surface = Color3.fromRGB(250, 251, 253), Row = Color3.fromRGB(240, 242, 246),
@@ -87,8 +86,8 @@ local FovCircle = nil
 local _sliderConn = nil
 local _playerListeners = {}
 local _frameCounter = 0
-local _speedBV = nil  -- Para SpeedHack via BodyVelocity
-local _lockTimer = 0  -- Humanizer
+local _speedBV = nil
+local _lockTimer = 0
 
 -- ──────────────────────────────────────────────────────────────
 -- 1. FUNÇÕES AUXILIARES
@@ -99,7 +98,6 @@ local function mround(val, decimals)
 end
 
 local _twInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local _twInfoFast = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local function tw(obj, props) pcall(function() Tween:Create(obj, _twInfo, props):Play() end) end
 
 local function safeDrawingNew(kind)
@@ -296,7 +294,7 @@ local function hitboxStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 5. NOCLIP (anti-detect: só ativa quando em movimento)
+-- 5. NOCLIP
 -- ──────────────────────────────────────────────────────────────
 local function _noclipBuildCache(char)
     _noclipPartCache = {}
@@ -364,7 +362,7 @@ local function noclipStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 6. SPEEDHACK ANTI-DETECT (via BodyVelocity em vez de CFrame)
+-- 6. SPEEDHACK (via BodyVelocity) e INFJUMP
 -- ──────────────────────────────────────────────────────────────
 Run.RenderStepped:Connect(function(dt)
     if CFG.SpeedHackOn and not CFG.FlyOn then
@@ -402,9 +400,8 @@ UIS.JumpRequest:Connect(function()
 end)
 
 -- ──────────────────────────────────────────────────────────────
--- 7. FLY (com aceleração gradual anti-detect)
+-- 7. FLY CORRIGIDO (SEM ACELERAÇÃO GRADUAL)
 -- ──────────────────────────────────────────────────────────────
-local _flyCurrentSpeed = 0
 local function flyStart()
     if _flyConn then return end
     local char = LP.Character
@@ -414,24 +411,27 @@ local function flyStart()
     _flyPrevWalk, _flyPrevJump = hum.WalkSpeed, hum.JumpPower
     hum.WalkSpeed, hum.JumpPower = 16, 50
     CFG.FlyOn = true
-    _flyCurrentSpeed = 0
+
     local bodyVel = Instance.new("BodyVelocity")
     bodyVel.MaxForce = Vector3.new(40000, 40000, 40000)
-    bodyVel.P = 1250; bodyVel.Velocity = Vector3.zero; bodyVel.Parent = hrp
+    bodyVel.P = 1250
+    bodyVel.Velocity = Vector3.zero
+    bodyVel.Parent = hrp
+
     _flyConn = Run.Heartbeat:Connect(function()
         local c = LP.Character
         local r = c and c:FindFirstChild("HumanoidRootPart")
         if not r or not bodyVel or not bodyVel.Parent then return end
-        local targetSpeed = CFG.FlySpeed
-        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then targetSpeed = targetSpeed * 2.5 end
-        -- Aceleração gradual (anti-detect)
-        _flyCurrentSpeed = _flyCurrentSpeed + (targetSpeed - _flyCurrentSpeed) * math.min(0.15, dt * 5)
-        local speed = _flyCurrentSpeed
+
+        local speed = CFG.FlySpeed
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then speed = speed * 2.5 end
+
         local cf = Cam.CFrame
         local fwd = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
         local right = Vector3.new(cf.RightVector.X, 0, cf.RightVector.Z)
         fwd = fwd.Magnitude > 0.01 and fwd.Unit or Vector3.zero
         right = right.Magnitude > 0.01 and right.Unit or Vector3.zero
+
         local dir = Vector3.zero
         if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + fwd end
         if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - fwd end
@@ -439,8 +439,10 @@ local function flyStart()
         if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + right end
         if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
         if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, 1, 0) end
+
         bodyVel.Velocity = dir.Magnitude > 0.01 and dir.Unit * speed or Vector3.zero
     end)
+
     if _flyCharConn then _flyCharConn:Disconnect() end
     _flyCharConn = LP.CharacterAdded:Connect(function()
         if bodyVel and bodyVel.Parent then bodyVel:Destroy() end
@@ -451,9 +453,9 @@ end
 
 local function flyStop()
     CFG.FlyOn = false
-    _flyCurrentSpeed = 0
     if _flyConn then _flyConn:Disconnect(); _flyConn = nil end
     if _flyCharConn then _flyCharConn:Disconnect(); _flyCharConn = nil end
+
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
@@ -462,7 +464,9 @@ local function flyStop()
         hrp.AssemblyLinearVelocity = Vector3.zero
     end
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-    if hum then hum.WalkSpeed, hum.JumpPower = _flyPrevWalk, _flyPrevJump end
+    if hum then
+        hum.WalkSpeed, hum.JumpPower = _flyPrevWalk, _flyPrevJump
+    end
     arStop()
 end
 
@@ -497,7 +501,7 @@ local function carBoostStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 9. ESP CORE (com nomes ofuscados)
+-- 9. ESP CORE
 -- ──────────────────────────────────────────────────────────────
 local function _projectAll(pc)
     local anyVis = false
@@ -638,7 +642,7 @@ local function _tryCreateESP(pl)
     end
     if not head or not head.Parent then return end
 
-    -- Nomes ofuscados para evitar detecção
+    -- Nomes ofuscados
     local rnd = tostring(math.random(1000, 9999))
     local surfaceGui = Instance.new("SurfaceGui")
     surfaceGui.Name = "SG" .. rnd
@@ -966,7 +970,7 @@ task.spawn(function()
 end)
 
 -- ──────────────────────────────────────────────────────────────
--- 10. CROSSHAIR
+-- 10. CROSSHAIR E FOV
 -- ──────────────────────────────────────────────────────────────
 pcall(function()
     for i = 1, 4 do
@@ -999,7 +1003,7 @@ if FovCircle then
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 11. AIMBOT COM HUMANIZER (anti-detect)
+-- 11. AIMBOT COM HUMANIZER
 -- ──────────────────────────────────────────────────────────────
 local rcParams = RaycastParams.new()
 rcParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -1098,7 +1102,6 @@ local function getAimTarget()
     return _aimBest
 end
 
--- 🔥 AIMBOT COM HUMANIZER
 local _lastTarget = nil
 local _targetLockTime = 0
 Run.RenderStepped:Connect(function(dt)
@@ -1109,19 +1112,15 @@ Run.RenderStepped:Connect(function(dt)
     end
 
     local targetPart = getAimTarget()
-    
-    -- Humanizer: se encontrou um alvo, aplica um pequeno atraso antes de grudar
     if targetPart and targetPart.Parent then
         if _lastTarget ~= targetPart then
             _lastTarget = targetPart
             _targetLockTime = CFG.Humanizer and (CFG.HumanizerDelay * (0.7 + math.random() * 0.6)) or 0
         end
-        
         if _targetLockTime > 0 then
             _targetLockTime = _targetLockTime - dt
-            return  -- Espera o delay humano
+            return
         end
-        
         local aimPos = targetPart.Position
         if CFG.Prediction then
             local vel = targetPart.AssemblyLinearVelocity or Vector3.zero
@@ -1131,7 +1130,6 @@ Run.RenderStepped:Connect(function(dt)
                 aimPos = aimPos + (vel * math.min(predFactor, 0.5))
             end
         end
-
         local camPos = Cam.CFrame.Position
         if (aimPos - camPos).Magnitude > 0.01 then
             local targetCF = CFrame.new(camPos, aimPos)
@@ -1145,7 +1143,6 @@ Run.RenderStepped:Connect(function(dt)
             end
         end
     else
-        -- Se perdeu o alvo, reseta o timer
         _targetLockTime = 0
     end
 end)
@@ -1185,12 +1182,10 @@ local function _doTrigger()
         end
         return
     end
-
     local char = LP.Character
     if not char then return end
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return end
-
     local tool = char:FindFirstChildOfClass("Tool")
     if tool and type(tool.Activate) == "function" then
         if not _triggerHolding then
@@ -1213,7 +1208,6 @@ Run.RenderStepped:Connect(function(dt)
         FovCircle.Radius = CFG.FOV
         FovCircle.Position = Vector2.new(Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y * 0.5)
     end
-
     if CFG.Triggerbot then
         _trigTimer = _trigTimer + dt
         if _trigTimer >= 0.05 then
@@ -1270,14 +1264,13 @@ local function loadConfig()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 14. GUI OFUSCADA (Anti-Detect)
+-- 14. GUI (OFUSCADA)
 -- ──────────────────────────────────────────────────────────────
 local Root = Instance.new("ScreenGui")
 Root.Name = "UI_" .. math.random(100000, 999999)
 Root.ResetOnSpawn = false
 Root.IgnoreGuiInset = true
 Root.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
--- Proteção para Xeno (pcall)
 pcall(function() if syn and syn.protect_gui then syn.protect_gui(Root) end end)
 if not pcall(function() Root.Parent = SafeParent end) then Root.Parent = LP:FindFirstChildOfClass("PlayerGui") end
 
@@ -1307,7 +1300,7 @@ hLine.BackgroundColor3 = T.Accent; hLine.BorderSizePixel = 0; hLine.ZIndex = 3
 
 local titleL = Instance.new("TextLabel", Header)
 titleL.Size = UDim2.new(1, -70, 0, 24); titleL.Position = UDim2.new(0, 44, 0, 4)
-titleL.BackgroundTransparency = 1; titleL.Text = "System v5.7"
+titleL.BackgroundTransparency = 1; titleL.Text = "System v5.7.1"
 titleL.TextColor3 = T.AccentBr; titleL.TextSize = 15; titleL.Font = Enum.Font.GothamBold
 titleL.TextXAlignment = Enum.TextXAlignment.Left; titleL.ZIndex = 3
 
@@ -1718,8 +1711,9 @@ do
         .. "• Painel: " .. KEYS.Panel.Name .. "   • Aim: " .. KEYS.Aimbot.Name .. "\n"
         .. "• ESP: " .. KEYS.ESP.Name .. "   • Hitbox: " .. KEYS.Hitbox.Name .. "\n"
         .. "• Fly: " .. KEYS.Fly.Name .. "   • Noclip: " .. KEYS.Noclip.Name .. "\n\n"
-        .. "✔ SpeedHack via BodyVelocity\n"
+        .. "✔ Fly 100% funcional\n"
         .. "✔ Humanizer no Aimbot\n"
+        .. "✔ SpeedHack via BodyVelocity\n"
         .. "✔ Nomes ofuscados (Anti-Detect)"
     cl.TextColor3 = T.TextDim; cl.TextSize = 11; cl.Font = Enum.Font.GothamBold
     cl.TextWrapped = true; cl.TextXAlignment = Enum.TextXAlignment.Left; cl.TextYAlignment = Enum.TextYAlignment.Top
@@ -1796,9 +1790,9 @@ LP.AncestryChanged:Connect(_cleanup)
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = PAINEL_NOME,
-        Text = "v5.7 Anti-Detect carregado no Xeno!",
+        Text = "v5.7.1 Fly corrigido e completo!",
         Duration = 3,
     })
 end)
 
-print("[M7CPA] " .. PAINEL_NOME .. " v5.7 Anti-Detect carregado com sucesso no Xeno!")
+print("[M7CPA] " .. PAINEL_NOME .. " v5.7.1 carregado com sucesso!")
