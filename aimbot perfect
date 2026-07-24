@@ -316,17 +316,50 @@ local function arStop()
 end
 
 -- ═══════════════════════════════════════════════
--- HITBOX EXPANDER (Stealth & Anti-Detection)
+-- HITBOX EXPANDER (Universal Character Scaling & Multi-Rig Support)
 -- ═══════════════════════════════════════════════
 local _hbShadows    = {}
 local _hbOrigSz     = {}
 local _hbConns      = {}
 local _hbPlayerConn = nil
 
+local function _findHead(char)
+    if not char then return nil end
+    local head = char:FindFirstChild("Head") or char:FindFirstChild("head")
+    if head and head:IsA("BasePart") then return head end
+    for _, p in ipairs(char:GetChildren()) do
+        if p:IsA("BasePart") and (p.Name:lower():find("head") or p.Name:lower():find("cabeca")) then
+            return p
+        end
+    end
+    return nil
+end
+
+local function _findTorsoParts(char)
+    local parts = {}
+    if not char then return parts end
+    local candidates = {"UpperTorso", "LowerTorso", "Torso", "Chest", "HumanoidRootPart", "root"}
+    for _, name in ipairs(candidates) do
+        local p = char:FindFirstChild(name)
+        if p and p:IsA("BasePart") then
+            table.insert(parts, p)
+        end
+    end
+    if #parts == 0 then
+        for _, p in ipairs(char:GetChildren()) do
+            if p:IsA("BasePart") and p.Name:lower():find("torso") then
+                table.insert(parts, p)
+            end
+        end
+    end
+    return parts
+end
+
 local function _hbApply(char)
     if not char or not char.Parent then return end
-    local head = char:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then return end
+    local head = _findHead(char)
+    local torsoParts = _findTorsoParts(char)
+    if not head and #torsoParts == 0 then return end
 
     local base = mmin(mmax(CFG.HitboxSize, 1), 60)
     local targetChoice = CFG.HitboxPart or "Head"
@@ -336,48 +369,48 @@ local function _hbApply(char)
     end
     local saved = _hbOrigSz[char]
 
-    local partsToExpand = {}
+    local targetParts = {}
     if targetChoice == "Head" then
-        partsToExpand = { "Head" }
-    elseif targetChoice == "Torso" then
-        partsToExpand = { "Torso", "UpperTorso", "LowerTorso" }
-    elseif targetChoice == "RootPart" then
-        partsToExpand = { "Torso", "UpperTorso" }
+        if head then table.insert(targetParts, head) else targetParts = torsoParts end
+    elseif targetChoice == "Torso" or targetChoice == "RootPart" then
+        targetParts = torsoParts
     else -- "All"
-        partsToExpand = { "Head", "Torso", "UpperTorso", "LowerTorso" }
-    end
-
-    for _, name in ipairs(partsToExpand) do
-        local p = char:FindFirstChild(name)
-        if p and p:IsA("BasePart") then
-            if not saved[name] then
-                saved[name] = {
-                    sz = p.Size,
-                    cc = p.CanCollide,
-                    ml = p.Massless,
-                    tp = p.Transparency
-                }
-            end
-
-            pcall(function()
-                p.Massless     = true
-                p.CanCollide   = false
-                p.CanTouch     = true
-                p.Size         = V3new(base, base, base)
-                p.Transparency = 0.5
-            end)
+        if head then table.insert(targetParts, head) end
+        for _, tp in ipairs(torsoParts) do
+            if tp.Name ~= "HumanoidRootPart" then table.insert(targetParts, tp) end
         end
     end
+
+    for _, p in ipairs(targetParts) do
+        local name = p.Name
+        if not saved[name] then
+            saved[name] = {
+                part         = p,
+                sz           = p.Size,
+                cc           = p.CanCollide,
+                ml           = p.Massless,
+                tp           = p.Transparency
+            }
+        end
+
+        pcall(function()
+            p.Massless     = true
+            p.CanCollide   = false
+            p.CanTouch     = true
+            p.Size         = V3new(base, base, base)
+            p.Transparency = 0.5
+        end)
+    end
     _hbOrigSz[char] = saved
-    _hbShadows[char] = head
+    _hbShadows[char] = head or targetParts[1]
 end
 
 local function _hbRestore(char)
     if not char then return end
     local saved = _hbOrigSz[char]
     if saved then
-        for name, orig in pairs(saved) do
-            local p = char:FindFirstChild(name)
+        for _, orig in pairs(saved) do
+            local p = orig.part or (char:FindFirstChild(orig.name or ""))
             if p and p:IsA("BasePart") then
                 pcall(function()
                     p.Size         = orig.sz
@@ -388,7 +421,7 @@ local function _hbRestore(char)
             end
         end
     else
-        local head = char:FindFirstChild("Head")
+        local head = _findHead(char)
         if head and head:IsA("BasePart") then
             pcall(function()
                 head.Size         = V3new(1.2, 1.2, 1.2)
