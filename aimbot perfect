@@ -1,6 +1,6 @@
 --[[
-    AIMBOT + HITBOX + ESP + FLY BY M7CPA — v5.3 Xeno Edition (ESP Fix)
-    Correção: ESP não congela mais na tela
+    AIMBOT + HITBOX + ESP + FLY BY M7CPA — v5.5 Turbo Edition (Aimbot Fix + All Players)
+    Correção: Movimento da câmera roda TODO FRAME para não tremer.
 --]]
 
 -- Serviços
@@ -19,8 +19,8 @@ if not SafeParent then pcall(function() SafeParent = game:GetService("CoreGui") 
 if not SafeParent then SafeParent = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui") end
 
 -- Anti-Duplicacao
-local PAINEL_NOME = "Aimbot by M7CPA"
-local _GKEY = "_M7CPA_V53"
+local PAINEL_NOME = "Aimbot by M7CPA v5.5"
+local _GKEY = "_M7CPA_V55"
 if getgenv and getgenv()[_GKEY] then pcall(getgenv()[_GKEY]); getgenv()[_GKEY] = nil end
 
 -- Configuracoes
@@ -72,19 +72,27 @@ local _cooldowns = { aimbot = 0, esp = 0, fly = 0, noclip = 0, hitbox = 0, carbo
 local _arRefCount = 0
 local _noclipPartCache = {}
 local _partCache = {}
-local _cacheConns = {}
 local _hbShadows = {}
 local _hbPlayerConn = nil
 local _arSteppedConn, _arCharConn = nil, nil
 local _noclipConn, _noclipCharConn = nil, nil
+local _noclipDescConn = nil
 local _flyConn, _flyCharConn = nil, nil
 local _flyPrevWalk, _flyPrevJump = 16, 50
 local carBoostConn = nil
 local _chLines = {}
 local FovCircle = nil
 local _sliderConn = nil
+local _playerListeners = {}
+local _frameCounter = 0
 
--- Funcoes auxiliares
+-- 🔥 NOVAS VARIÁVEIS PARA O AIMBOT CORRIGIDO
+local _lastAimTarget = nil
+local _lastAimPos = Vector3.zero
+
+-- ──────────────────────────────────────────────────────────────
+-- 1. FUNÇÕES AUXILIARES
+-- ──────────────────────────────────────────────────────────────
 local function mround(val, decimals)
     local mult = 10 ^ (decimals or 0)
     return math.floor((tonumber(val) or 0) * mult + 0.5) / mult
@@ -101,7 +109,9 @@ local function safeDrawingNew(kind)
     return obj
 end
 
--- Cache de Partes
+-- ──────────────────────────────────────────────────────────────
+-- 2. CACHE DE PARTES (com limpeza melhorada)
+-- ──────────────────────────────────────────────────────────────
 local CACHE_PART_NAMES = {
     "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso",
     "LeftUpperArm", "LeftLowerArm", "LeftHand",
@@ -132,7 +142,9 @@ local function _clearPartCache(char)
     _partCache[char] = nil
 end
 
--- Anti-Ragdoll
+-- ──────────────────────────────────────────────────────────────
+-- 3. ANTI-RAGDOLL
+-- ──────────────────────────────────────────────────────────────
 local function arStart()
     _arRefCount = _arRefCount + 1
     if _arRefCount > 1 then return end
@@ -165,7 +177,9 @@ local function arStop()
     if _arCharConn then _arCharConn:Disconnect(); _arCharConn = nil end
 end
 
--- Hitbox
+-- ──────────────────────────────────────────────────────────────
+-- 4. HITBOX (com correção de memory leak no PlayerRemoving)
+-- ──────────────────────────────────────────────────────────────
 local function _findHead(char)
     if not char then return nil end
     local head = char:FindFirstChild("Head")
@@ -243,6 +257,17 @@ local function _hbRestoreAll()
     end
 end
 
+local function _hbCleanupPlayer(pl)
+    if pl and pl.Character then
+        _hbRestore(pl.Character)
+        _clearPartCache(pl.Character)
+    end
+    if _hbConns[pl] then
+        pcall(function() _hbConns[pl]:Disconnect() end)
+        _hbConns[pl] = nil
+    end
+end
+
 local function hitboxStart()
     CFG.HitboxOn = true; _hbApplyAll()
     if not _hbPlayerConn then
@@ -271,26 +296,57 @@ local function hitboxStop()
     if _hbPlayerConn then pcall(function() _hbPlayerConn:Disconnect() end); _hbPlayerConn = nil end
 end
 
--- NoClip
+-- ──────────────────────────────────────────────────────────────
+-- 5. NOCLIP (com DescendantAdded para partes dinâmicas)
+-- ──────────────────────────────────────────────────────────────
+local function _noclipBuildCache(char)
+    _noclipPartCache = {}
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then _noclipPartCache[#_noclipPartCache + 1] = p end
+    end
+end
+
 local function noclipStart()
     if _noclipConn then return end
-    CFG.NoclipOn = true; _noclipPartCache = {}
-    local function build(char)
-        _noclipPartCache = {}
-        if not char then return end
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then _noclipPartCache[#_noclipPartCache + 1] = p end
-        end
+    CFG.NoclipOn = true
+    local char = LP.Character
+    _noclipBuildCache(char)
+    arStart()
+
+    if _noclipDescConn then _noclipDescConn:Disconnect() end
+    if char then
+        _noclipDescConn = char.DescendantAdded:Connect(function(desc)
+            if desc:IsA("BasePart") then
+                _noclipPartCache[#_noclipPartCache + 1] = desc
+                pcall(function() desc.CanCollide = false end)
+            end
+        end)
     end
-    build(LP.Character); arStart()
+
     _noclipConn = Run.Stepped:Connect(function()
         if not CFG.NoclipOn then return end
         for i = #_noclipPartCache, 1, -1 do
             local p = _noclipPartCache[i]
-            if p and p.Parent then p.CanCollide = false else table.remove(_noclipPartCache, i) end
+            if p and p.Parent then
+                p.CanCollide = false
+            else
+                table.remove(_noclipPartCache, i)
+            end
         end
     end)
-    _noclipCharConn = LP.CharacterAdded:Connect(function(char) task.wait(0.1); build(char) end)
+
+    _noclipCharConn = LP.CharacterAdded:Connect(function(char)
+        task.wait(0.1)
+        _noclipBuildCache(char)
+        if _noclipDescConn then _noclipDescConn:Disconnect() end
+        _noclipDescConn = char.DescendantAdded:Connect(function(desc)
+            if desc:IsA("BasePart") then
+                _noclipPartCache[#_noclipPartCache + 1] = desc
+                pcall(function() desc.CanCollide = false end)
+            end
+        end)
+    end)
 end
 
 local function noclipStop()
@@ -298,14 +354,21 @@ local function noclipStop()
     CFG.NoclipOn = false
     _noclipConn:Disconnect(); _noclipConn = nil
     if _noclipCharConn then _noclipCharConn:Disconnect(); _noclipCharConn = nil end
+    if _noclipDescConn then _noclipDescConn:Disconnect(); _noclipDescConn = nil end
     local char = LP.Character
-    if char then for _, p in ipairs(_noclipPartCache) do if p and p.Parent then pcall(function() p.CanCollide = true end) end end end
+    if char then
+        for _, p in ipairs(_noclipPartCache) do
+            if p and p.Parent then pcall(function() p.CanCollide = true end) end
+        end
+    end
     _noclipPartCache = {}; arStop()
 end
 
--- SpeedHack & InfJump
+-- ──────────────────────────────────────────────────────────────
+-- 6. SPEEDHACK (com verificação de conflito com Fly)
+-- ──────────────────────────────────────────────────────────────
 Run.RenderStepped:Connect(function(dt)
-    if CFG.SpeedHackOn then
+    if CFG.SpeedHackOn and not CFG.FlyOn then
         local char = LP.Character
         local hum = char and char:FindFirstChildWhichIsA("Humanoid")
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -323,7 +386,9 @@ UIS.JumpRequest:Connect(function()
     end
 end)
 
--- Fly
+-- ──────────────────────────────────────────────────────────────
+-- 7. FLY
+-- ──────────────────────────────────────────────────────────────
 local function flyStart()
     if _flyConn then return end
     local char = LP.Character
@@ -380,7 +445,9 @@ local function flyStop()
     arStop()
 end
 
--- Car Boost
+-- ──────────────────────────────────────────────────────────────
+-- 8. CAR BOOST
+-- ──────────────────────────────────────────────────────────────
 local function carBoostStart()
     if carBoostConn then return end
     CFG.CarBoostOn = true
@@ -408,10 +475,9 @@ local function carBoostStop()
     if carBoostConn then carBoostConn:Disconnect(); carBoostConn = nil end
 end
 
--- ═══════════════════════════════════════════════
--- ESP CORE (CORRIGIDO - ANTI-CONGELAMENTO)
--- ═══════════════════════════════════════════════
-
+-- ──────────────────────────────────────────────────────────────
+-- 9. ESP CORE (com otimização de performance e limpeza total)
+-- ──────────────────────────────────────────────────────────────
 local function _projectAll(pc)
     local anyVis = false
     for _, name in ipairs(CACHE_PART_NAMES) do
@@ -505,76 +571,25 @@ local function _hpColor(pct)
     else return Color3.fromRGB(230, 35, 60) end
 end
 
--- ✅ CORRIGIDO: Função que ESCONDE COMPLETAMENTE todos os elementos visuais
 local function _hideAllESP(d)
     if not d then return end
-    -- SurfaceGui
-    if d.visual and d.visual.gui then
-        d.visual.gui.Enabled = false
-    end
-    -- Drawing Objects - Name
-    if d.nameLbl then
-        d.nameLbl.Visible = false
-        d.nameLbl.Position = Vector2.new(-999, -999)
-    end
-    -- Drawing Objects - Distance
-    if d.distLbl then
-        d.distLbl.Visible = false
-        d.distLbl.Position = Vector2.new(-999, -999)
-    end
-    -- Drawing Objects - Skeleton
-    if d.skelLines then
-        for _, l in ipairs(d.skelLines) do
-            if l then
-                l.Visible = false
-                l.From = Vector2.new(-999, -999)
-                l.To = Vector2.new(-999, -999)
-            end
-        end
-    end
-    -- Drawing Objects - Head Circle
-    if d.skelHead then
-        d.skelHead.Visible = false
-        d.skelHead.Position = Vector2.new(-999, -999)
-    end
-    -- Drawing Objects - Box
-    if d.boxSq then
-        d.boxSq.Visible = false
-        d.boxSq.Position = Vector2.new(-999, -999)
-        d.boxSq.Size = Vector2.new(0, 0)
-    end
-    -- Drawing Objects - HP Bar
-    if d.hpBg then
-        d.hpBg.Visible = false
-        d.hpBg.Position = Vector2.new(-999, -999)
-    end
-    if d.hpFg then
-        d.hpFg.Visible = false
-        d.hpFg.Position = Vector2.new(-999, -999)
-    end
-    -- Drawing Objects - Tracer
-    if d.tracerLine then
-        d.tracerLine.Visible = false
-        d.tracerLine.From = Vector2.new(-999, -999)
-        d.tracerLine.To = Vector2.new(-999, -999)
-    end
+    if d.visual and d.visual.gui then d.visual.gui.Enabled = false end
+    if d.nameLbl then d.nameLbl.Visible = false; d.nameLbl.Position = Vector2.new(-999, -999) end
+    if d.distLbl then d.distLbl.Visible = false; d.distLbl.Position = Vector2.new(-999, -999) end
+    if d.skelLines then for _, l in ipairs(d.skelLines) do if l then l.Visible = false; l.From = Vector2.new(-999, -999); l.To = Vector2.new(-999, -999) end end end
+    if d.skelHead then d.skelHead.Visible = false; d.skelHead.Position = Vector2.new(-999, -999) end
+    if d.boxSq then d.boxSq.Visible = false; d.boxSq.Position = Vector2.new(-999, -999); d.boxSq.Size = Vector2.new(0, 0) end
+    if d.hpBg then d.hpBg.Visible = false; d.hpBg.Position = Vector2.new(-999, -999) end
+    if d.hpFg then d.hpFg.Visible = false; d.hpFg.Position = Vector2.new(-999, -999) end
+    if d.tracerLine then d.tracerLine.Visible = false; d.tracerLine.From = Vector2.new(-999, -999); d.tracerLine.To = Vector2.new(-999, -999) end
 end
 
--- ✅ CORRIGIDO: Função que DESTRÓI completamente todos os elementos
 local function _destroyESPData(d)
     if not d then return end
-    -- Destroi SurfaceGui
-    if d.visual and d.visual.gui then
-        pcall(function() d.visual.gui:Destroy() end)
-    end
-    -- Remove Drawing Objects
+    if d.visual and d.visual.gui then pcall(function() d.visual.gui:Destroy() end) end
     if d.nameLbl then pcall(function() d.nameLbl:Remove() end) end
     if d.distLbl then pcall(function() d.distLbl:Remove() end) end
-    if d.skelLines then
-        for _, l in ipairs(d.skelLines) do
-            if l then pcall(function() l:Remove() end) end
-        end
-    end
+    if d.skelLines then for _, l in ipairs(d.skelLines) do if l then pcall(function() l:Remove() end) end end end
     if d.skelHead then pcall(function() d.skelHead:Remove() end) end
     if d.boxSq then pcall(function() d.boxSq:Remove() end) end
     if d.hpBg then pcall(function() d.hpBg:Remove() end) end
@@ -582,69 +597,84 @@ local function _destroyESPData(d)
     if d.tracerLine then pcall(function() d.tracerLine:Remove() end) end
 end
 
-local function espAdd(player)
-    if not player or player == LP then return end
-    -- ✅ CORRIGIDO: Remove ESP antigo se existir (evita duplicatas)
-    if _espData[player] then
-        _destroyESPData(_espData[player])
-        _espData[player] = nil
+local function _tryCreateESP(pl)
+    if pl == LP then return end
+    if not pl or not pl.Parent then return end
+    if _espData[pl] then
+        _destroyESPData(_espData[pl])
+        _espData[pl] = nil
     end
-    
-    local char = player.Character
+    local char = pl.Character
     if not char then return end
     local head = char:FindFirstChild("Head")
-    if not head then return end
-    
-    -- Criar ESP visual (SurfaceGui)
+    if not head then
+        local waited = 0
+        repeat
+            task.wait(0.1)
+            waited = waited + 0.1
+            head = char:FindFirstChild("Head")
+        until head or waited > 3 or not char.Parent
+    end
+    if not head or not head.Parent then return end
+
     local surfaceGui = Instance.new("SurfaceGui")
     surfaceGui.Adornee = head; surfaceGui.AlwaysOnTop = true
     surfaceGui.Enabled = CFG.ESPOn; surfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     surfaceGui.Parent = head
-    
+
     local espFrame = Instance.new("Frame")
     espFrame.Size = UDim2.new(2, 0, 2, 0); espFrame.Position = UDim2.new(-0.5, 0, -0.5, 0)
     espFrame.BackgroundColor3 = CFG.ESPPlayerColor; espFrame.BackgroundTransparency = 0.7
     espFrame.BorderSizePixel = 0; espFrame.Parent = surfaceGui
-    
+
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Size = UDim2.new(4, 0, 1, 0); nameLabel.Position = UDim2.new(-1.5, 0, -2, 0)
-    nameLabel.Text = player.Name; nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.Text = pl.Name; nameLabel.TextColor3 = Color3.new(1, 1, 1)
     nameLabel.BackgroundTransparency = 1; nameLabel.TextSize = 14; nameLabel.Parent = surfaceGui
-    
-    -- Criar Drawing Objects
+
     local nameLbl = safeDrawingNew("Text")
     if nameLbl then nameLbl.Size = 13; nameLbl.Center = true; nameLbl.Outline = true end
-    
+
     local distLbl = safeDrawingNew("Text")
     if distLbl then distLbl.Size = 11; distLbl.Center = true; distLbl.Outline = true end
-    
+
     local skelLines = {}
     for i = 1, 12 do
         local l = safeDrawingNew("Line")
         if l then l.Thickness = 1.5; l.Visible = false; skelLines[i] = l end
     end
-    
+
     local skelHead = safeDrawingNew("Circle")
     if skelHead then skelHead.Thickness = 1.5; skelHead.Filled = false; skelHead.NumSides = 16; skelHead.Visible = false end
-    
+
     local boxSq = safeDrawingNew("Square")
     if boxSq then boxSq.Thickness = 1.5; boxSq.Filled = false; boxSq.Visible = false end
-    
+
     local hpBg = safeDrawingNew("Square")
     if hpBg then hpBg.Thickness = 1; hpBg.Filled = true; hpBg.Color = Color3.fromRGB(20, 20, 20); hpBg.Visible = false end
-    
+
     local hpFg = safeDrawingNew("Square")
     if hpFg then hpFg.Thickness = 1; hpFg.Filled = true; hpFg.Visible = false end
-    
+
     local tracerLine = safeDrawingNew("Line")
     if tracerLine then tracerLine.Thickness = 1.2; tracerLine.Visible = false end
-    
-    _espData[player] = {
-        player = player,
+
+    _espData[pl] = {
+        player = pl,
         visual = { gui = surfaceGui, frame = espFrame, label = nameLabel },
         nameLbl = nameLbl, distLbl = distLbl, skelLines = skelLines,
         skelHead = skelHead, boxSq = boxSq, hpBg = hpBg, hpFg = hpFg, tracerLine = tracerLine,
     }
+end
+
+local function _scanAllPlayers()
+    local activeESP = CFG.ESPOn or CFG.ESPBoxOn or CFG.TracersOn or CFG.ChamsOn
+    if not activeESP then return end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LP and pl.Character then
+            if not _espData[pl] then _tryCreateESP(pl) end
+        end
+    end
 end
 
 local function espRemove(player)
@@ -653,9 +683,12 @@ local function espRemove(player)
         _destroyESPData(d)
         _espData[player] = nil
     end
-    -- Tambem limpa o cache de partes
     if player and player.Character then
         _clearPartCache(player.Character)
+    end
+    if _playerListeners[player] then
+        pcall(function() _playerListeners[player]:Disconnect() end)
+        _playerListeners[player] = nil
     end
 end
 
@@ -664,20 +697,21 @@ local function espClear()
         _destroyESPData(d)
     end
     _espData = {}
+    for pl, conn in pairs(_playerListeners) do
+        pcall(function() conn:Disconnect() end)
+    end
+    _playerListeners = {}
+    for char in pairs(_partCache) do _partCache[char] = nil end
 end
 
 local function espStart()
     CFG.ESPOn = true
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl ~= LP then espAdd(pl) end
-    end
+    _scanAllPlayers()
 end
 
 local function espStop()
     CFG.ESPOn = false
-    for pl, d in pairs(_espData) do
-        _hideAllESP(d)
-    end
+    for pl, d in pairs(_espData) do _hideAllESP(d) end
 end
 
 local function espRefreshColors()
@@ -689,8 +723,7 @@ local function espRefreshColors()
     end
 end
 
--- Chams
-local function updateChams(pl, char)
+local function updateChams(pl, char, forceColor)
     if not CFG.ChamsOn then
         if _chamsAdornments[pl] then
             for _, b in ipairs(_chamsAdornments[pl]) do pcall(function() b:Destroy() end) end
@@ -712,81 +745,80 @@ local function updateChams(pl, char)
             end
             _chamsAdornments[pl] = adorns
         else
-            for _, b in ipairs(adorns) do
-                if b and b.Parent then b.Color3 = CFG.ChamsColor end
+            if forceColor or true then
+                for _, b in ipairs(adorns) do
+                    if b and b.Parent then b.Color3 = CFG.ChamsColor end
+                end
             end
         end
     end
 end
 
--- ✅ CORRIGIDO: Loop Principal ESP - Verificacao rigorosa de personagem valido
-Run.RenderStepped:Connect(function()
+-- LOOP PRINCIPAL ESP
+Run.RenderStepped:Connect(function(dt)
+    _frameCounter = _frameCounter + 1
     local espOn = CFG.ESPOn
     local boxOn = CFG.ESPBoxOn
     local tracerOn = CFG.TracersOn
     local chamsOn = CFG.ChamsOn
-    
-    -- Se nada estiver ativo, esconde tudo
+
     if not (espOn or boxOn or tracerOn or chamsOn) then
         for _, d in pairs(_espData) do _hideAllESP(d) end
         return
     end
-    
+
+    if _frameCounter % 2 == 0 then
+        local activePlayers = Players:GetPlayers()
+        local activeSet = {}
+        for _, pl in ipairs(activePlayers) do if pl ~= LP then activeSet[pl] = true end end
+        for pl in pairs(_espData) do
+            if not activeSet[pl] then espRemove(pl) end
+        end
+        for pl in pairs(activeSet) do
+            if not _espData[pl] and pl.Character then _tryCreateESP(pl) end
+        end
+    end
+
     local maxDist = CFG.ESPMaxDist
     local pCol = CFG.ESPPlayerColor
     local skThick = CFG.ESPSkelThick
     local myHrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
     local myPos = myHrp and myHrp.Position
     local screenCenter = Vector2.new(Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y)
-    
-    -- Adiciona novos players
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl ~= LP and not _espData[pl] then espAdd(pl) end
-    end
-    
-    -- Lista de players para remover (mortos/sem personagem)
-    local toRemove = {}
-    
+
     for pl, d in pairs(_espData) do
         local char = pl.Character
-        
-        -- ✅ CORRIGIDO: Verifica se o player ainda existe e tem personagem valido
         if not pl.Parent or not char or not char.Parent then
-            table.insert(toRemove, pl)
             _hideAllESP(d)
         else
-            -- Verifica se o personagem tem Humanoid vivo
             local hum = char:FindFirstChildWhichIsA("Humanoid")
             if not hum or hum.Health <= 0 then
                 _hideAllESP(d)
             else
-                if chamsOn then updateChams(pl, char) end
-                
+                if chamsOn then updateChams(pl, char, false) end
+
                 local pc = _getPartCache(char)
                 if pc then
                     local head = pc["Head"] or char:FindFirstChild("Head")
                     if head and head.Parent then
                         local headPos = head.Position
                         local dist = myPos and (headPos - myPos).Magnitude or 0
-                        
+
                         if (not myPos or maxDist <= 0 or dist <= maxDist) then
-                            -- Atualizar SurfaceGui
                             if d.visual and d.visual.gui then
                                 d.visual.gui.Enabled = espOn
-                                if d.visual.gui.Adornee ~= head then
-                                    d.visual.gui.Adornee = head
-                                end
+                                if d.visual.gui.Adornee ~= head then d.visual.gui.Adornee = head end
                                 if d.visual.frame then d.visual.frame.BackgroundColor3 = pCol end
                                 if d.visual.label then
                                     d.visual.label.Text = pl.Name .. " [" .. math.floor(dist) .. "m]"
                                     d.visual.label.TextColor3 = pCol
                                 end
                             end
-                            
+
                             local sp, vis = Cam:WorldToViewportPoint(headPos + Vector3.new(0, 0.5, 0))
                             if vis and sp.Z > 0 then
                                 local sx, sy = sp.X, sp.Y
-                                
+
                                 if espOn and d.nameLbl then
                                     d.nameLbl.Visible = true; d.nameLbl.Text = pl.Name
                                     d.nameLbl.Color = pCol; d.nameLbl.Position = Vector2.new(sx, sy - 18)
@@ -798,12 +830,12 @@ Run.RenderStepped:Connect(function()
                                     if d.nameLbl then d.nameLbl.Visible = false end
                                     if d.distLbl then d.distLbl.Visible = false end
                                 end
-                                
+
                                 if tracerOn and d.tracerLine then
                                     d.tracerLine.From = screenCenter; d.tracerLine.To = Vector2.new(sx, sy)
                                     d.tracerLine.Color = CFG.TracerColor; d.tracerLine.Visible = true
                                 elseif d.tracerLine then d.tracerLine.Visible = false end
-                                
+
                                 local headVis = _projectAll(pc)
                                 if headVis then
                                     if espOn then
@@ -813,7 +845,7 @@ Run.RenderStepped:Connect(function()
                                         for _, l in ipairs(d.skelLines or {}) do if l then l.Visible = false end end
                                         if d.skelHead then d.skelHead.Visible = false end
                                     end
-                                    
+
                                     local bx, by, bw, bh = _bboxFromProjections()
                                     if bx then
                                         if boxOn and d.boxSq then
@@ -821,7 +853,7 @@ Run.RenderStepped:Connect(function()
                                             d.boxSq.Size = Vector2.new(bw, bh)
                                             d.boxSq.Color = CFG.ESPBoxColor; d.boxSq.Visible = true
                                         elseif d.boxSq then d.boxSq.Visible = false end
-                                        
+
                                         if espOn then
                                             local hum2 = pc._hum or char:FindFirstChildOfClass("Humanoid")
                                             local pct = hum2 and hum2.MaxHealth > 0 and math.clamp(hum2.Health / hum2.MaxHealth, 0, 1) or 1
@@ -839,7 +871,6 @@ Run.RenderStepped:Connect(function()
                                         if d.hpFg then d.hpFg.Visible = false end
                                     end
                                 else
-                                    -- ✅ CORRIGIDO: Esconde tudo se nao houver projecao valida
                                     for _, l in ipairs(d.skelLines or {}) do if l then l.Visible = false end end
                                     if d.skelHead then d.skelHead.Visible = false end
                                     if d.boxSq then d.boxSq.Visible = false end
@@ -847,11 +878,9 @@ Run.RenderStepped:Connect(function()
                                     if d.hpFg then d.hpFg.Visible = false end
                                 end
                             else
-                                -- ✅ CORRIGIDO: Fora da tela = esconde
                                 _hideAllESP(d)
                             end
                         else
-                            -- ✅ CORRIGIDO: Fora da distancia maxima = esconde
                             _hideAllESP(d)
                         end
                     else
@@ -863,31 +892,56 @@ Run.RenderStepped:Connect(function()
             end
         end
     end
-    
-    -- ✅ CORRIGIDO: Remove players que sairam/morreram
-    for _, pl in ipairs(toRemove) do
-        espRemove(pl)
-    end
 end)
 
--- Eventos de Player
+-- PlayerAdded / PlayerRemoving
 Players.PlayerAdded:Connect(function(pl)
-    if CFG.ESPOn or CFG.ESPBoxOn or CFG.TracersOn or CFG.ChamsOn then
-        task.wait(0.5)
-        espAdd(pl)
+    if pl == LP then return end
+    local function waitForCharacter()
+        local char = pl.Character
+        if not char then
+            pl.CharacterAdded:Wait()
+            char = pl.Character
+        end
+        if char then
+            char:WaitForChild("Head", 5)
+            task.wait(0.3)
+            if CFG.ESPOn or CFG.ESPBoxOn or CFG.TracersOn or CFG.ChamsOn then
+                _tryCreateESP(pl)
+            end
+        end
     end
+    task.spawn(waitForCharacter)
+    _playerListeners[pl] = pl.CharacterAdded:Connect(function(char)
+        char:WaitForChild("Head", 5)
+        task.wait(0.3)
+        if CFG.ESPOn or CFG.ESPBoxOn or CFG.TracersOn or CFG.ChamsOn then
+            _tryCreateESP(pl)
+        end
+    end)
 end)
 
 Players.PlayerRemoving:Connect(function(pl)
     espRemove(pl)
-    -- Limpa Chams
+    _hbCleanupPlayer(pl)
     if _chamsAdornments[pl] then
         for _, b in ipairs(_chamsAdornments[pl]) do pcall(function() b:Destroy() end) end
         _chamsAdornments[pl] = nil
     end
+    if _partCache[pl.Character] then _partCache[pl.Character] = nil end
 end)
 
--- Crosshair
+task.spawn(function()
+    while true do
+        task.wait(3)
+        local activeESP = CFG.ESPOn or CFG.ESPBoxOn or CFG.TracersOn or CFG.ChamsOn
+        if activeESP then _scanAllPlayers() end
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────
+-- 10. CROSSHAIR
+-- ──────────────────────────────────────────────────────────────
 pcall(function()
     for i = 1, 4 do
         local l = safeDrawingNew("Line")
@@ -912,17 +966,27 @@ Run.RenderStepped:Connect(function()
     end
 end)
 
--- FOV Circle
 FovCircle = safeDrawingNew("Circle")
 if FovCircle then
     FovCircle.Visible = false; FovCircle.Thickness = 1.5
     FovCircle.Color = T.White; FovCircle.Filled = false; FovCircle.NumSides = 32
 end
 
--- Aimbot Core
+-- ──────────────────────────────────────────────────────────────
+-- 11. AIMBOT CORRIGIDO (Busca espaçada, Movimento TODO FRAME)
+-- ──────────────────────────────────────────────────────────────
 local rcParams = RaycastParams.new()
 rcParams.FilterType = Enum.RaycastFilterType.Exclude
 pcall(function() rcParams.RespectCanCollide = true end)
+
+local _filterCache = { Cam }
+local function _updateFilter(ownerChar)
+    local myChar = LP.Character
+    _filterCache = { Cam }
+    if myChar then table.insert(_filterCache, myChar) end
+    if ownerChar then table.insert(_filterCache, ownerChar) end
+    rcParams.FilterDescendantsInstances = _filterCache
+end
 
 local function _nearestPointOnPart(part)
     if not part or not part.Parent then return part and part.Position or Vector3.zero end
@@ -940,13 +1004,7 @@ end
 
 local function isVisible(part, ownerChar)
     if not CFG.WallCheck then return true end
-    local myChar2 = LP.Character
-    local ancestor = ownerChar or (part and part:FindFirstAncestorWhichIsA("Model")) or part.Parent
-    local filter = {}
-    if myChar2 then filter[#filter+1] = myChar2 end
-    if ancestor then filter[#filter+1] = ancestor end
-    filter[#filter+1] = Cam
-    rcParams.FilterDescendantsInstances = filter
+    _updateFilter(ownerChar)
     local targetPos = _nearestPointOnPart(part)
     local res = workspace:Raycast(Cam.CFrame.Position, targetPos - Cam.CFrame.Position, rcParams)
     return res == nil
@@ -985,10 +1043,14 @@ local function _checkModel(model, playerObj)
     local shadowPart = CFG.HitboxOn and (head or _hbShadows[model])
     local aimPart = (shadowPart and shadowPart.Parent and shadowPart) or targetPart
     local targetWorldPos = aimPart.Position
+
     if CFG.Prediction then
         local vel = aimPart.AssemblyLinearVelocity or Vector3.zero
-        targetWorldPos = targetWorldPos + (vel * CFG.PredAmt)
+        local dist = _aimMyPos and (_aimMyPos - targetWorldPos).Magnitude or 100
+        local predFactor = CFG.PredAmt * math.sqrt(dist / 100)
+        targetWorldPos = targetWorldPos + (vel * math.min(predFactor, 0.5))
     end
+
     local pos, vis = Cam:WorldToViewportPoint(targetWorldPos)
     if not vis or pos.Z < 0 then return end
     local dx, dy = pos.X - _aimCX, pos.Y - _aimCY
@@ -1010,14 +1072,62 @@ local function getAimTarget()
     return _aimBest
 end
 
+-- Aplicação do Aimbot (roda TODO FRAME para ficar liso)
+Run.RenderStepped:Connect(function(dt)
+    if not CFG.Aimbot then
+        _lastAimTarget = nil
+        return 
+    end
+
+    -- 1. ATUALIZAÇÃO DO ALVO (roda a cada 2 frames para economizar CPU)
+    if _frameCounter % 2 == 0 then
+        local targetPart = getAimTarget()
+        if targetPart and targetPart.Parent then
+            _lastAimTarget = targetPart
+            _lastAimPos = targetPart.Position
+
+            if CFG.Prediction then
+                local vel = targetPart.AssemblyLinearVelocity or Vector3.zero
+                if vel.Magnitude > 0.05 then
+                    local dist = _aimMyPos and (_aimMyPos - _lastAimPos).Magnitude or 100
+                    local predFactor = CFG.PredAmt * math.sqrt(dist / 100)
+                    _lastAimPos = _lastAimPos + (vel * math.min(predFactor, 0.5))
+                end
+            end
+        else
+            _lastAimTarget = nil
+        end
+    end
+
+    -- 2. MOVIMENTO DA CÂMERA (roda TODO FRAME - ESSENCIAL PARA NÃO TREPIDAR)
+    if _lastAimTarget and _lastAimTarget.Parent then
+        local camPos = Cam.CFrame.Position
+        local aimPos = _lastAimPos
+
+        if (aimPos - camPos).Magnitude > 0.01 then
+            local targetCF = CFrame.new(camPos, aimPos)
+
+            if CFG.Smooth then
+                local smoothSpeed = CFG.SmoothAmt * 0.6
+                local alpha = 1 - math.exp(-smoothSpeed * dt * 0.5)
+                alpha = math.clamp(alpha, 0.03, 0.98)
+                Cam.CFrame = Cam.CFrame:Lerp(targetCF, alpha)
+            else
+                Cam.CFrame = targetCF
+            end
+        end
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────
+-- 12. TRIGGERBOT CORRIGIDO
+-- ──────────────────────────────────────────────────────────────
+local _triggerHolding = false
 local function _getCrosshairTarget()
     local camPos = Cam.CFrame.Position
     local camDir = Cam.CFrame.LookVector * 2000
     local myChar = LP.Character
-    local filter = {}
-    if myChar then filter[#filter+1] = myChar end
-    filter[#filter+1] = Cam
-    rcParams.FilterDescendantsInstances = filter
+    _updateFilter(myChar)
     local res = workspace:Raycast(camPos, camDir, rcParams)
     if res and res.Instance then
         local hitModel = res.Instance:FindFirstAncestorWhichIsA("Model")
@@ -1035,91 +1145,79 @@ local function _getCrosshairTarget()
     return nil
 end
 
-local function _doClick()
-    pcall(function()
-        local char = LP.Character
-        if not char then return end
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health <= 0 then return end
-        local reactionTime = math.random(150, 300) / 1000
-        task.wait(reactionTime)
-        local target = _getCrosshairTarget()
-        if not target then return end
-        if math.random(1, 10) == 1 then task.wait(math.random(50, 150) / 1000); return end
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool and type(tool.Activate) == "function" then
+local function _doTrigger()
+    local target = _getCrosshairTarget()
+    if not target then
+        if _triggerHolding then
+            pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+            _triggerHolding = false
+        end
+        return
+    end
+
+    local char = LP.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool and type(tool.Activate) == "function" then
+        if not _triggerHolding then
             tool:Activate()
             task.wait(math.random(20, 60) / 1000)
             if math.random(1, 4) == 1 then task.wait(math.random(30, 80) / 1000); tool:Activate() end
-        else
-            pcall(function()
-                VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                task.wait(0.01)
-                VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-            end)
         end
-        task.wait(math.random(100, 400) / 1000)
-    end)
+    else
+        if not _triggerHolding then
+            pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0) end)
+            _triggerHolding = true
+        end
+    end
 end
 
--- Aimbot Loop
-Run.RenderStepped:Connect(function(dt)
-    if not CFG.Aimbot then return end
-    local targetPart = getAimTarget()
-    if not targetPart or not targetPart.Parent then return end
-    local aimPos = targetPart.Position
-    if CFG.Prediction then
-        local vel = targetPart.AssemblyLinearVelocity or Vector3.zero
-        if vel.Magnitude > 0.05 then aimPos = aimPos + (vel * CFG.PredAmt) end
-    end
-    local camPos = Cam.CFrame.Position
-    if (aimPos - camPos).Magnitude > 0.01 then
-        local targetCF = CFrame.new(camPos, aimPos)
-        if CFG.Smooth then
-            local alpha = math.clamp((101 - CFG.SmoothAmt) * dt * 0.4, 0.05, 1)
-            Cam.CFrame = Cam.CFrame:Lerp(targetCF, alpha)
-        else
-            Cam.CFrame = targetCF
-        end
-    end
-end)
-
--- FOV Circle & Triggerbot
 local _trigTimer = 0
 Run.RenderStepped:Connect(function(dt)
     if FovCircle then
-        FovCircle.Visible = CFG.ShowFOV; FovCircle.Radius = CFG.FOV
+        FovCircle.Visible = CFG.ShowFOV
+        FovCircle.Radius = CFG.FOV
         FovCircle.Position = Vector2.new(Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y * 0.5)
     end
+
     if CFG.Triggerbot then
-        local hitChar = _getCrosshairTarget()
-        if not hitChar then
-            local aimTarget = getAimTarget()
-            if aimTarget then
-                local sp, vis = Cam:WorldToViewportPoint(aimTarget.Position)
-                if vis and sp.Z > 0 then
-                    local cx, cy = Cam.ViewportSize.X * 0.5, Cam.ViewportSize.Y * 0.5
-                    if (Vector2.new(sp.X, sp.Y) - Vector2.new(cx, cy)).Magnitude <= 30 then
-                        hitChar = aimTarget.Parent
-                    end
-                end
-            end
-        end
-        if hitChar then
-            _trigTimer = _trigTimer + dt
-            if _trigTimer >= 0.04 then _trigTimer = 0; task.spawn(_doClick) end
-        else
+        _trigTimer = _trigTimer + dt
+        if _trigTimer >= 0.05 then
             _trigTimer = 0
+            task.spawn(_doTrigger)
         end
+    else
+        if _triggerHolding then
+            pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+            _triggerHolding = false
+        end
+        _trigTimer = 0
     end
 end)
 
--- Config System
-local DEFAULT_CONFIG = { Aimbot = false, SmoothAmt = 18, FOV = 69 }
+-- ──────────────────────────────────────────────────────────────
+-- 13. CONFIGURAÇÕES
+-- ──────────────────────────────────────────────────────────────
+local function normalizeColor(c)
+    return Color3.new(
+        math.round(c.R * 1000) / 1000,
+        math.round(c.G * 1000) / 1000,
+        math.round(c.B * 1000) / 1000
+    )
+end
 
 local function saveConfig()
     if type(getgenv) == "function" then
-        getgenv().M7CPA_CONFIG = table.clone(CFG)
+        local clone = table.clone(CFG)
+        for k, v in pairs(clone) do
+            if type(v) == "table" and v.R and v.G and v.B then
+                clone[k] = normalizeColor(v)
+            end
+        end
+        getgenv().M7CPA_CONFIG = clone
     end
 end
 
@@ -1127,12 +1225,22 @@ local function loadConfig()
     if type(getgenv) == "function" and getgenv().M7CPA_CONFIG then
         local saved = getgenv().M7CPA_CONFIG
         for k, v in pairs(saved) do
-            if CFG[k] ~= nil then CFG[k] = v; if toggleRefs[k] then toggleRefs[k](v) end end
+            if CFG[k] ~= nil then
+                if type(v) == "table" and v.R and v.G and v.B then
+                    CFG[k] = normalizeColor(v)
+                else
+                    CFG[k] = v
+                end
+                if toggleRefs[k] then toggleRefs[k](CFG[k]) end
+            end
         end
+        espRefreshColors()
     end
 end
 
--- GUI
+-- ──────────────────────────────────────────────────────────────
+-- 14. GUI
+-- ──────────────────────────────────────────────────────────────
 local Root = Instance.new("ScreenGui")
 Root.Name = "_g_" .. math.random(1000, 9999); Root.ResetOnSpawn = false
 Root.IgnoreGuiInset = true; Root.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -1148,7 +1256,6 @@ Panel.Active = true; Panel.ClipsDescendants = true
 Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 12)
 local pStroke = Instance.new("UIStroke", Panel); pStroke.Color = T.Border; pStroke.Thickness = 1.5
 
--- Header
 local Header = Instance.new("Frame", Panel)
 Header.Size = UDim2.new(1, 0, 0, 48); Header.BackgroundColor3 = T.Surface
 Header.BorderSizePixel = 0; Header.ZIndex = 2
@@ -1164,7 +1271,7 @@ hLine.BackgroundColor3 = T.Accent; hLine.BorderSizePixel = 0; hLine.ZIndex = 3
 
 local titleL = Instance.new("TextLabel", Header)
 titleL.Size = UDim2.new(1, -70, 0, 24); titleL.Position = UDim2.new(0, 44, 0, 4)
-titleL.BackgroundTransparency = 1; titleL.Text = PAINEL_NOME .. " v5.3"
+titleL.BackgroundTransparency = 1; titleL.Text = PAINEL_NOME
 titleL.TextColor3 = T.AccentBr; titleL.TextSize = 15; titleL.Font = Enum.Font.GothamBold
 titleL.TextXAlignment = Enum.TextXAlignment.Left; titleL.ZIndex = 3
 
@@ -1179,7 +1286,6 @@ xBtn.MouseEnter:Connect(function() tw(xBtn, {BackgroundColor3 = T.Accent, TextCo
 xBtn.MouseLeave:Connect(function() tw(xBtn, {BackgroundColor3 = T.Row, TextColor3 = T.Text}) end)
 xBtn.MouseButton1Click:Connect(function() Panel.Visible = false end)
 
--- Arrasto
 do
     local drag, startM, startP = false, nil, nil
     Header.InputBegan:Connect(function(i)
@@ -1198,7 +1304,6 @@ do
     end)
 end
 
--- Sidebar
 local Sidebar = Instance.new("Frame", Panel)
 Sidebar.Size = UDim2.new(0, SW, 1, -48); Sidebar.Position = UDim2.new(0, 0, 0, 48)
 Sidebar.BackgroundColor3 = T.Sidebar; Sidebar.BorderSizePixel = 0; Sidebar.ClipsDescendants = true
@@ -1217,7 +1322,6 @@ local Content = Instance.new("Frame", Panel)
 Content.Size = UDim2.new(1, -SW - 1, 1, -48); Content.Position = UDim2.new(0, SW + 1, 0, 48)
 Content.BackgroundTransparency = 1; Content.ClipsDescendants = true
 
--- Helpers UI
 local function mkCorner(p, r)
     local c = Instance.new("UICorner", p); c.CornerRadius = UDim.new(0, r or 7); return c
 end
@@ -1292,7 +1396,6 @@ local function makeTab(icon, label)
     makePage(label); return label
 end
 
--- Componentes
 local function addSection(parent, order, txt)
     local f = Instance.new("Frame", parent)
     f.Size = UDim2.new(1, -4, 0, 28); f.BackgroundTransparency = 1; f.LayoutOrder = order
@@ -1367,7 +1470,7 @@ local function addButton(parent, order, title, onClick)
     btn.MouseButton1Click:Connect(function() if onClick then onClick() end end)
 end
 
-local function addSlider(parent, order, title, key, minVal, maxVal, onChange)
+local function addSlider(parent, order, title, key, minVal, maxVal, onChange, isInt)
     local row = Instance.new("Frame", parent)
     row.Size = UDim2.new(1, -4, 0, 50); row.BackgroundColor3 = T.Row; row.BorderSizePixel = 0; row.LayoutOrder = order
     mkCorner(row, 8)
@@ -1375,7 +1478,7 @@ local function addSlider(parent, order, title, key, minVal, maxVal, onChange)
     local titleL2 = mkLabel(row, title, 12, T.Text, Enum.Font.GothamBold)
     titleL2.Size = UDim2.new(0.7, 0, 0, 22); titleL2.Position = UDim2.new(0, 12, 0, 4)
     local curVal = CFG[key] or minVal
-    local valL = mkLabel(row, tostring(mround(curVal, 2)), 12, T.AccentBr, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
+    local valL = mkLabel(row, tostring(mround(curVal, isInt and 0 or 2)), 12, T.AccentBr, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
     valL.Size = UDim2.new(0.25, 0, 0, 22); valL.Position = UDim2.new(0.72, 0, 0, 4)
     local track = Instance.new("Frame", row)
     track.Size = UDim2.new(1, -24, 0, 8); track.Position = UDim2.new(0, 12, 0, 32)
@@ -1384,7 +1487,7 @@ local function addSlider(parent, order, title, key, minVal, maxVal, onChange)
     local pct = math.clamp((curVal - minVal) / (maxVal - minVal), 0, 1)
     local fill = Instance.new("Frame", track)
     fill.Size = UDim2.new(pct, 0, 1, 0); fill.BackgroundColor3 = T.Accent; fill.BorderSizePixel = 0; mkCorner(fill, 4)
-    local sdData = { dragging = false, bar = track, fill = fill, lbl = valL, min = minVal, max = maxVal, key = key, onChange = onChange }
+    local sdData = { dragging = false, bar = track, fill = fill, lbl = valL, min = minVal, max = maxVal, key = key, onChange = onChange, step = isInt and 1 or nil }
     table.insert(_sliderDrags, sdData)
     local hit = Instance.new("TextButton", row)
     hit.Size = UDim2.new(1, 0, 1, 0); hit.BackgroundTransparency = 1; hit.Text = ""; hit.ZIndex = 4
@@ -1459,7 +1562,6 @@ local function addColorPicker(parent, order, title, cfgKey, onChange)
     end
 end
 
--- Slider Loop
 _sliderConn = Run.RenderStepped:Connect(function()
     for _, sd in ipairs(_sliderDrags) do
         if sd.dragging then
@@ -1467,14 +1569,18 @@ _sliderConn = Run.RenderStepped:Connect(function()
             local pct = math.clamp((pos.X - sd.bar.AbsolutePosition.X) / sd.bar.AbsoluteSize.X, 0, 1)
             local val = sd.min + (sd.max - sd.min) * pct
             if sd.step then val = math.floor(val / sd.step + 0.5) * sd.step end
-            CFG[sd.key] = val; sd.fill.Size = UDim2.new(pct, 0, 1, 0)
-            sd.lbl.Text = tostring(type(val) == "number" and mround(val, 2) or val)
+            CFG[sd.key] = val
+            sd.fill.Size = UDim2.new(pct, 0, 1, 0)
+            local display = (sd.step and sd.step == 1) and math.floor(val) or mround(val, 2)
+            sd.lbl.Text = tostring(display)
             if sd.onChange then sd.onChange(val) end
         end
     end
 end)
 
--- Construcao das Abas
+-- ──────────────────────────────────────────────────────────────
+-- 15. CONSTRUÇÃO DA GUI
+-- ──────────────────────────────────────────────────────────────
 local tabCombat = makeTab("⚔", "Combat")
 local tabMove = makeTab("🚀", "Movement")
 local tabVis = makeTab("👁", "Visuals")
@@ -1482,7 +1588,6 @@ local tabSet = makeTab("⚙", "Settings")
 local tabCores = makeTab("🎨", "Cores")
 local tabCred = makeTab("ℹ", "Credits")
 
--- Combat
 do
     local pg = pages[tabCombat]; local o = 0
     local function n() o = o + 1; return o end
@@ -1490,40 +1595,38 @@ do
     addToggle(pg, n(), "Ativar Aimbot", "Aimbot")
     addSelector(pg, n(), "Alvo do Aimbot", {"Head", "Torso", "Closest"}, "TargetBone")
     addToggle(pg, n(), "Smoothing", "Smooth")
-    addSlider(pg, n(), "Smooth Amount (1-100)", "SmoothAmt", 1, 100)
+    addSlider(pg, n(), "Smooth Amount (1-100)", "SmoothAmt", 1, 100, nil, true)
     addToggle(pg, n(), "Previsao de Movimento", "Prediction")
     addSlider(pg, n(), "Intensidade Previsao", "PredAmt", 0.01, 0.5)
     addToggle(pg, n(), "Triggerbot", "Triggerbot")
     addToggle(pg, n(), "Wall Check", "WallCheck")
     addToggle(pg, n(), "Team Check", "TeamCheck")
-    addSlider(pg, n(), "Distancia Maxima", "AimbotMaxDist", 0, 6000)
+    addSlider(pg, n(), "Distancia Maxima", "AimbotMaxDist", 0, 6000, nil, true)
     addSection(pg, n(), "FOV Settings")
-    addSlider(pg, n(), "Raio do FOV", "FOV", 10, 400)
+    addSlider(pg, n(), "Raio do FOV", "FOV", 10, 400, nil, true)
     addToggle(pg, n(), "Mostrar Circulo FOV", "ShowFOV", function(v) if FovCircle then FovCircle.Visible = v end end)
 end
 
--- Movement
 do
     local pg = pages[tabMove]; local o = 0
     local function n() o = o + 1; return o end
     addSection(pg, n(), "Fly (Anti-Detect)")
     addToggle(pg, n(), "Ativar Fly [" .. KEYS.Fly.Name .. "]", "FlyOn", function(v) if v then flyStart() else flyStop() end end)
-    addSlider(pg, n(), "Velocidade Fly", "FlySpeed", 20, 300)
+    addSlider(pg, n(), "Velocidade Fly", "FlySpeed", 20, 300, nil, true)
     addSection(pg, n(), "Speed & Jump")
     addToggle(pg, n(), "Safe SpeedHack", "SpeedHackOn")
-    addSlider(pg, n(), "Velocidade SpeedHack", "SpeedAmt", 5, 150)
+    addSlider(pg, n(), "Velocidade SpeedHack", "SpeedAmt", 5, 150, nil, true)
     addToggle(pg, n(), "Infinite Jump", "InfJumpOn")
     addSection(pg, n(), "NoClip & Hitbox")
     addToggle(pg, n(), "Ativar NoClip [" .. KEYS.Noclip.Name .. "]", "NoclipOn", function(v) if v then noclipStart() else noclipStop() end end)
     addToggle(pg, n(), "Expandir Hitbox [" .. KEYS.Hitbox.Name .. "]", "HitboxOn", function(v) if v then hitboxStart() else hitboxStop() end end)
     addSelector(pg, n(), "Parte da Hitbox", {"All", "Head", "RootPart", "Torso"}, "HitboxPart", function() if CFG.HitboxOn then _hbRestoreAll(); _hbApplyAll() end end)
-    addSlider(pg, n(), "Tamanho Hitbox", "HitboxSize", 2, 60, function() if CFG.HitboxOn then _hbApplyAll() end end)
+    addSlider(pg, n(), "Tamanho Hitbox", "HitboxSize", 2, 60, nil, true)
     addSection(pg, n(), "Veiculos")
     addToggle(pg, n(), "Car Boost [" .. KEYS.CarBoost.Name .. "]", "CarBoostOn", function(v) if v then carBoostStart() else carBoostStop() end end)
-    addSlider(pg, n(), "Velocidade Carro", "CarSpeed", 50, 500)
+    addSlider(pg, n(), "Velocidade Carro", "CarSpeed", 50, 500, nil, true)
 end
 
--- Visuals
 do
     local pg = pages[tabVis]; local o = 0
     local function n() o = o + 1; return o end
@@ -1533,12 +1636,11 @@ do
     addToggle(pg, n(), "Tracers", "TracersOn")
     addToggle(pg, n(), "Chams 3D", "ChamsOn")
     addToggle(pg, n(), "Crosshair", "CrosshairOn")
-    addSlider(pg, n(), "Tamanho Crosshair", "CrosshairSize", 4, 30)
-    addSlider(pg, n(), "Espessura Esqueleto", "ESPSkelThick", 1, 5)
-    addSlider(pg, n(), "Distancia Maxima ESP", "ESPMaxDist", 50, 2000)
+    addSlider(pg, n(), "Tamanho Crosshair", "CrosshairSize", 4, 30, nil, true)
+    addSlider(pg, n(), "Espessura Esqueleto", "ESPSkelThick", 1, 5, nil, true)
+    addSlider(pg, n(), "Distancia Maxima ESP", "ESPMaxDist", 50, 2000, nil, true)
 end
 
--- Settings
 do
     local pg = pages[tabSet]; local o = 0
     local function n() o = o + 1; return o end
@@ -1555,7 +1657,6 @@ do
     addKeybind(pg, n(), "Car Boost", "CarBoost")
 end
 
--- Cores
 do
     local pg = pages[tabCores]; local o = 0
     local function n() o = o + 1; return o end
@@ -1568,7 +1669,6 @@ do
     addColorPicker(pg, n(), "Cor Item/Mochila", "ESPToolColor", function() espRefreshColors() end)
 end
 
--- Credits
 do
     local pg = pages[tabCred]
     local inf = Instance.new("Frame", pg)
@@ -1576,11 +1676,11 @@ do
     Instance.new("UIStroke", inf).Color = T.Border; Instance.new("UIStroke", inf).Thickness = 1
     local cl = Instance.new("TextLabel", inf)
     cl.Size = UDim2.new(1, -16, 1, -8); cl.Position = UDim2.new(0, 8, 0, 4); cl.BackgroundTransparency = 1
-    cl.Text = PAINEL_NOME .. " — v5.3 ESP Fix\n\n"
+    cl.Text = PAINEL_NOME .. " — v5.5 Turbo\n\n"
         .. "• Painel: " .. KEYS.Panel.Name .. "   • Aim: " .. KEYS.Aimbot.Name .. "\n"
         .. "• ESP: " .. KEYS.ESP.Name .. "   • Hitbox: " .. KEYS.Hitbox.Name .. "\n"
         .. "• Fly: " .. KEYS.Fly.Name .. "   • Noclip: " .. KEYS.Noclip.Name .. "\n\n"
-        .. "ESP Corrigido - Nao congela mais!"
+        .. "✔ Otimizado | ✔ Sem vazamento | ✔ Aimbot Liso"
     cl.TextColor3 = T.TextDim; cl.TextSize = 11; cl.Font = Enum.Font.GothamBold
     cl.TextWrapped = true; cl.TextXAlignment = Enum.TextXAlignment.Left; cl.TextYAlignment = Enum.TextYAlignment.Top
 end
@@ -1588,7 +1688,9 @@ end
 switchTab(tabCombat)
 loadConfig()
 
--- Input System
+-- ──────────────────────────────────────────────────────────────
+-- 16. KEYBINDS E CLEANUP
+-- ──────────────────────────────────────────────────────────────
 local function checkCooldown(feature)
     if tick() < (_cooldowns[feature] or 0) then return false end
     return true
@@ -1602,7 +1704,7 @@ UIS.InputBegan:Connect(function(inp, gpe)
     if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if inp.KeyCode == KEYS.Panel then Panel.Visible = not Panel.Visible; return end
     if gpe then return end
-    
+
     if inp.KeyCode == KEYS.Aimbot then
         if not checkCooldown("aimbot") then return end; setCooldown("aimbot", 0.5)
         CFG.Aimbot = not CFG.Aimbot; if toggleRefs.Aimbot then toggleRefs.Aimbot(CFG.Aimbot) end
@@ -1629,7 +1731,6 @@ UIS.InputBegan:Connect(function(inp, gpe)
     end
 end)
 
--- Cleanup
 local function _cleanup()
     pcall(function() if CFG.NoclipOn then noclipStop() end end)
     pcall(function() if CFG.FlyOn then flyStop() end end)
@@ -1641,8 +1742,10 @@ local function _cleanup()
         if adorns then for _, b in ipairs(adorns) do pcall(function() b:Destroy() end) end end
     end
     _chamsAdornments = {}
-    pcall(function() Root:Destroy() end)
+    for pl, conn in pairs(_playerListeners) do pcall(function() conn:Disconnect() end) end
+    _playerListeners = {}
     for char in pairs(_partCache) do _partCache[char] = nil end
+    pcall(function() Root:Destroy() end)
     if type(getgenv) == "function" then getgenv()[_GKEY] = nil end
 end
 
@@ -1651,8 +1754,10 @@ LP.AncestryChanged:Connect(_cleanup)
 
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = PAINEL_NOME, Text = "v5.3 ESP Fix Carregado!", Duration = 3,
+        Title = PAINEL_NOME,
+        Text = "v5.5 Turbo - Aimbot Liso e Otimizado!",
+        Duration = 3,
     })
 end)
 
-print("[M7CPA] " .. PAINEL_NOME .. " v5.3 ESP Fix carregado com sucesso!")
+print("[M7CPA] " .. PAINEL_NOME .. " v5.5 Turbo carregado com sucesso!")
