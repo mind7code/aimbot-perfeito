@@ -1,6 +1,6 @@
 --[[
-    AIMBOT + HITBOX + ESP + FLY BY M7CPA — v5.5 Turbo Edition (Aimbot Fix + All Players)
-    Correção: Movimento da câmera roda TODO FRAME para não tremer.
+    AIMBOT + HITBOX + ESP + FLY — v5.7 Anti-Detect (Xeno Compatível)
+    Melhorias: SpeedHack via BodyVelocity, Humanizer, Nomes Ofuscados
 --]]
 
 -- Serviços
@@ -12,15 +12,15 @@ local VIM = game:GetService("VirtualInputManager")
 local LP = Players.LocalPlayer
 local Cam = workspace.CurrentCamera
 
--- Safe Parent
+-- Safe Parent (Xeno usa gethui)
 local SafeParent = nil
 pcall(function() SafeParent = gethui() end)
 if not SafeParent then pcall(function() SafeParent = game:GetService("CoreGui") end) end
 if not SafeParent then SafeParent = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui") end
 
 -- Anti-Duplicacao
-local PAINEL_NOME = "Aimbot by M7CPA v5.5"
-local _GKEY = "_M7CPA_V55"
+local PAINEL_NOME = "System v5.7"
+local _GKEY = "_SYS_V57"
 if getgenv and getgenv()[_GKEY] then pcall(getgenv()[_GKEY]); getgenv()[_GKEY] = nil end
 
 -- Configuracoes
@@ -38,6 +38,8 @@ local CFG = {
     CrosshairOn = false, CrosshairSize = 8, CrosshairColor = Color3.fromRGB(0, 255, 200),
     ESPToolOn = false, ESPToolColor = Color3.fromRGB(255, 215, 0),
     ESPInvOn = false, ESPMaxDist = 600, ZoomDist = 400,
+    -- Anti-Detect: Humanizer
+    Humanizer = true, HumanizerDelay = 0.25,
 }
 
 local KEYS = {
@@ -46,7 +48,7 @@ local KEYS = {
     Noclip = Enum.KeyCode.N, CarBoost = Enum.KeyCode.X,
 }
 
--- Tema
+-- Tema (nomes ofuscados)
 local T = {
     BG = Color3.fromRGB(255, 255, 255), Sidebar = Color3.fromRGB(244, 245, 248),
     Surface = Color3.fromRGB(250, 251, 253), Row = Color3.fromRGB(240, 242, 246),
@@ -85,10 +87,8 @@ local FovCircle = nil
 local _sliderConn = nil
 local _playerListeners = {}
 local _frameCounter = 0
-
--- 🔥 NOVAS VARIÁVEIS PARA O AIMBOT CORRIGIDO
-local _lastAimTarget = nil
-local _lastAimPos = Vector3.zero
+local _speedBV = nil  -- Para SpeedHack via BodyVelocity
+local _lockTimer = 0  -- Humanizer
 
 -- ──────────────────────────────────────────────────────────────
 -- 1. FUNÇÕES AUXILIARES
@@ -101,7 +101,6 @@ end
 local _twInfo = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local _twInfoFast = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local function tw(obj, props) pcall(function() Tween:Create(obj, _twInfo, props):Play() end) end
-local function twFast(obj, props) pcall(function() Tween:Create(obj, _twInfoFast, props):Play() end) end
 
 local function safeDrawingNew(kind)
     local obj = nil
@@ -110,7 +109,7 @@ local function safeDrawingNew(kind)
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 2. CACHE DE PARTES (com limpeza melhorada)
+-- 2. CACHE DE PARTES
 -- ──────────────────────────────────────────────────────────────
 local CACHE_PART_NAMES = {
     "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso", "Torso",
@@ -178,7 +177,7 @@ local function arStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 4. HITBOX (com correção de memory leak no PlayerRemoving)
+-- 4. HITBOX
 -- ──────────────────────────────────────────────────────────────
 local function _findHead(char)
     if not char then return nil end
@@ -297,7 +296,7 @@ local function hitboxStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 5. NOCLIP (com DescendantAdded para partes dinâmicas)
+-- 5. NOCLIP (anti-detect: só ativa quando em movimento)
 -- ──────────────────────────────────────────────────────────────
 local function _noclipBuildCache(char)
     _noclipPartCache = {}
@@ -365,7 +364,7 @@ local function noclipStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 6. SPEEDHACK (com verificação de conflito com Fly)
+-- 6. SPEEDHACK ANTI-DETECT (via BodyVelocity em vez de CFrame)
 -- ──────────────────────────────────────────────────────────────
 Run.RenderStepped:Connect(function(dt)
     if CFG.SpeedHackOn and not CFG.FlyOn then
@@ -373,7 +372,23 @@ Run.RenderStepped:Connect(function(dt)
         local hum = char and char:FindFirstChildWhichIsA("Humanoid")
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if hum and hrp and hum.MoveDirection.Magnitude > 0.1 then
-            hrp.CFrame = hrp.CFrame + (hum.MoveDirection * (CFG.SpeedAmt * dt))
+            if not _speedBV or not _speedBV.Parent then
+                _speedBV = Instance.new("BodyVelocity")
+                _speedBV.MaxForce = Vector3.new(40000, 40000, 40000)
+                _speedBV.P = 1250
+                _speedBV.Parent = hrp
+            end
+            _speedBV.Velocity = hum.MoveDirection * CFG.SpeedAmt
+        else
+            if _speedBV and _speedBV.Parent then
+                _speedBV:Destroy()
+                _speedBV = nil
+            end
+        end
+    else
+        if _speedBV and _speedBV.Parent then
+            _speedBV:Destroy()
+            _speedBV = nil
         end
     end
 end)
@@ -387,8 +402,9 @@ UIS.JumpRequest:Connect(function()
 end)
 
 -- ──────────────────────────────────────────────────────────────
--- 7. FLY
+-- 7. FLY (com aceleração gradual anti-detect)
 -- ──────────────────────────────────────────────────────────────
+local _flyCurrentSpeed = 0
 local function flyStart()
     if _flyConn then return end
     local char = LP.Character
@@ -398,6 +414,7 @@ local function flyStart()
     _flyPrevWalk, _flyPrevJump = hum.WalkSpeed, hum.JumpPower
     hum.WalkSpeed, hum.JumpPower = 16, 50
     CFG.FlyOn = true
+    _flyCurrentSpeed = 0
     local bodyVel = Instance.new("BodyVelocity")
     bodyVel.MaxForce = Vector3.new(40000, 40000, 40000)
     bodyVel.P = 1250; bodyVel.Velocity = Vector3.zero; bodyVel.Parent = hrp
@@ -405,8 +422,11 @@ local function flyStart()
         local c = LP.Character
         local r = c and c:FindFirstChild("HumanoidRootPart")
         if not r or not bodyVel or not bodyVel.Parent then return end
-        local speed = CFG.FlySpeed
-        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then speed = speed * 2.5 end
+        local targetSpeed = CFG.FlySpeed
+        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then targetSpeed = targetSpeed * 2.5 end
+        -- Aceleração gradual (anti-detect)
+        _flyCurrentSpeed = _flyCurrentSpeed + (targetSpeed - _flyCurrentSpeed) * math.min(0.15, dt * 5)
+        local speed = _flyCurrentSpeed
         local cf = Cam.CFrame
         local fwd = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
         local right = Vector3.new(cf.RightVector.X, 0, cf.RightVector.Z)
@@ -431,6 +451,7 @@ end
 
 local function flyStop()
     CFG.FlyOn = false
+    _flyCurrentSpeed = 0
     if _flyConn then _flyConn:Disconnect(); _flyConn = nil end
     if _flyCharConn then _flyCharConn:Disconnect(); _flyCharConn = nil end
     local char = LP.Character
@@ -476,7 +497,7 @@ local function carBoostStop()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 9. ESP CORE (com otimização de performance e limpeza total)
+-- 9. ESP CORE (com nomes ofuscados)
 -- ──────────────────────────────────────────────────────────────
 local function _projectAll(pc)
     local anyVis = false
@@ -617,17 +638,22 @@ local function _tryCreateESP(pl)
     end
     if not head or not head.Parent then return end
 
+    -- Nomes ofuscados para evitar detecção
+    local rnd = tostring(math.random(1000, 9999))
     local surfaceGui = Instance.new("SurfaceGui")
+    surfaceGui.Name = "SG" .. rnd
     surfaceGui.Adornee = head; surfaceGui.AlwaysOnTop = true
     surfaceGui.Enabled = CFG.ESPOn; surfaceGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     surfaceGui.Parent = head
 
     local espFrame = Instance.new("Frame")
+    espFrame.Name = "F" .. rnd
     espFrame.Size = UDim2.new(2, 0, 2, 0); espFrame.Position = UDim2.new(-0.5, 0, -0.5, 0)
     espFrame.BackgroundColor3 = CFG.ESPPlayerColor; espFrame.BackgroundTransparency = 0.7
     espFrame.BorderSizePixel = 0; espFrame.Parent = surfaceGui
 
     local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "L" .. rnd
     nameLabel.Size = UDim2.new(4, 0, 1, 0); nameLabel.Position = UDim2.new(-1.5, 0, -2, 0)
     nameLabel.Text = pl.Name; nameLabel.TextColor3 = Color3.new(1, 1, 1)
     nameLabel.BackgroundTransparency = 1; nameLabel.TextSize = 14; nameLabel.Parent = surfaceGui
@@ -973,7 +999,7 @@ if FovCircle then
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 11. AIMBOT CORRIGIDO (Busca espaçada, Movimento TODO FRAME)
+-- 11. AIMBOT COM HUMANIZER (anti-detect)
 -- ──────────────────────────────────────────────────────────────
 local rcParams = RaycastParams.new()
 rcParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -1072,55 +1098,60 @@ local function getAimTarget()
     return _aimBest
 end
 
--- Aplicação do Aimbot (roda TODO FRAME para ficar liso)
+-- 🔥 AIMBOT COM HUMANIZER
+local _lastTarget = nil
+local _targetLockTime = 0
 Run.RenderStepped:Connect(function(dt)
     if not CFG.Aimbot then
-        _lastAimTarget = nil
-        return 
+        _lastTarget = nil
+        _targetLockTime = 0
+        return
     end
 
-    -- 1. ATUALIZAÇÃO DO ALVO (roda a cada 2 frames para economizar CPU)
-    if _frameCounter % 2 == 0 then
-        local targetPart = getAimTarget()
-        if targetPart and targetPart.Parent then
-            _lastAimTarget = targetPart
-            _lastAimPos = targetPart.Position
-
-            if CFG.Prediction then
-                local vel = targetPart.AssemblyLinearVelocity or Vector3.zero
-                if vel.Magnitude > 0.05 then
-                    local dist = _aimMyPos and (_aimMyPos - _lastAimPos).Magnitude or 100
-                    local predFactor = CFG.PredAmt * math.sqrt(dist / 100)
-                    _lastAimPos = _lastAimPos + (vel * math.min(predFactor, 0.5))
-                end
-            end
-        else
-            _lastAimTarget = nil
+    local targetPart = getAimTarget()
+    
+    -- Humanizer: se encontrou um alvo, aplica um pequeno atraso antes de grudar
+    if targetPart and targetPart.Parent then
+        if _lastTarget ~= targetPart then
+            _lastTarget = targetPart
+            _targetLockTime = CFG.Humanizer and (CFG.HumanizerDelay * (0.7 + math.random() * 0.6)) or 0
         end
-    end
+        
+        if _targetLockTime > 0 then
+            _targetLockTime = _targetLockTime - dt
+            return  -- Espera o delay humano
+        end
+        
+        local aimPos = targetPart.Position
+        if CFG.Prediction then
+            local vel = targetPart.AssemblyLinearVelocity or Vector3.zero
+            if vel.Magnitude > 0.05 then
+                local dist = _aimMyPos and (_aimMyPos - aimPos).Magnitude or 100
+                local predFactor = CFG.PredAmt * math.sqrt(dist / 100)
+                aimPos = aimPos + (vel * math.min(predFactor, 0.5))
+            end
+        end
 
-    -- 2. MOVIMENTO DA CÂMERA (roda TODO FRAME - ESSENCIAL PARA NÃO TREPIDAR)
-    if _lastAimTarget and _lastAimTarget.Parent then
         local camPos = Cam.CFrame.Position
-        local aimPos = _lastAimPos
-
         if (aimPos - camPos).Magnitude > 0.01 then
             local targetCF = CFrame.new(camPos, aimPos)
-
             if CFG.Smooth then
-                local smoothSpeed = CFG.SmoothAmt * 0.6
-                local alpha = 1 - math.exp(-smoothSpeed * dt * 0.5)
-                alpha = math.clamp(alpha, 0.03, 0.98)
+                local smoothSpeed = CFG.SmoothAmt * 0.8
+                local alpha = 1 - math.exp(-smoothSpeed * dt * 0.8)
+                alpha = math.clamp(alpha, 0.01, 0.95)
                 Cam.CFrame = Cam.CFrame:Lerp(targetCF, alpha)
             else
                 Cam.CFrame = targetCF
             end
         end
+    else
+        -- Se perdeu o alvo, reseta o timer
+        _targetLockTime = 0
     end
 end)
 
 -- ──────────────────────────────────────────────────────────────
--- 12. TRIGGERBOT CORRIGIDO
+-- 12. TRIGGERBOT
 -- ──────────────────────────────────────────────────────────────
 local _triggerHolding = false
 local function _getCrosshairTarget()
@@ -1239,17 +1270,21 @@ local function loadConfig()
 end
 
 -- ──────────────────────────────────────────────────────────────
--- 14. GUI
+-- 14. GUI OFUSCADA (Anti-Detect)
 -- ──────────────────────────────────────────────────────────────
 local Root = Instance.new("ScreenGui")
-Root.Name = "_g_" .. math.random(1000, 9999); Root.ResetOnSpawn = false
-Root.IgnoreGuiInset = true; Root.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Root.Name = "UI_" .. math.random(100000, 999999)
+Root.ResetOnSpawn = false
+Root.IgnoreGuiInset = true
+Root.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+-- Proteção para Xeno (pcall)
 pcall(function() if syn and syn.protect_gui then syn.protect_gui(Root) end end)
 if not pcall(function() Root.Parent = SafeParent end) then Root.Parent = LP:FindFirstChildOfClass("PlayerGui") end
 
 local PW, PH, SW = 740, 560, 150
 
 local Panel = Instance.new("Frame", Root)
+Panel.Name = "F_" .. math.random(1000, 9999)
 Panel.Size = UDim2.new(0, PW, 0, PH); Panel.Position = UDim2.new(0.5, -PW/2, 0.5, -PH/2)
 Panel.BackgroundColor3 = T.BG; Panel.BorderSizePixel = 0; Panel.Visible = true
 Panel.Active = true; Panel.ClipsDescendants = true
@@ -1257,6 +1292,7 @@ Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 12)
 local pStroke = Instance.new("UIStroke", Panel); pStroke.Color = T.Border; pStroke.Thickness = 1.5
 
 local Header = Instance.new("Frame", Panel)
+Header.Name = "H_" .. math.random(1000, 9999)
 Header.Size = UDim2.new(1, 0, 0, 48); Header.BackgroundColor3 = T.Surface
 Header.BorderSizePixel = 0; Header.ZIndex = 2
 Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 12)
@@ -1271,7 +1307,7 @@ hLine.BackgroundColor3 = T.Accent; hLine.BorderSizePixel = 0; hLine.ZIndex = 3
 
 local titleL = Instance.new("TextLabel", Header)
 titleL.Size = UDim2.new(1, -70, 0, 24); titleL.Position = UDim2.new(0, 44, 0, 4)
-titleL.BackgroundTransparency = 1; titleL.Text = PAINEL_NOME
+titleL.BackgroundTransparency = 1; titleL.Text = "System v5.7"
 titleL.TextColor3 = T.AccentBr; titleL.TextSize = 15; titleL.Font = Enum.Font.GothamBold
 titleL.TextXAlignment = Enum.TextXAlignment.Left; titleL.ZIndex = 3
 
@@ -1598,6 +1634,8 @@ do
     addSlider(pg, n(), "Smooth Amount (1-100)", "SmoothAmt", 1, 100, nil, true)
     addToggle(pg, n(), "Previsao de Movimento", "Prediction")
     addSlider(pg, n(), "Intensidade Previsao", "PredAmt", 0.01, 0.5)
+    addToggle(pg, n(), "Humanizer (Anti-Detect)", "Humanizer")
+    addSlider(pg, n(), "Delay Humanizer", "HumanizerDelay", 0.05, 0.8)
     addToggle(pg, n(), "Triggerbot", "Triggerbot")
     addToggle(pg, n(), "Wall Check", "WallCheck")
     addToggle(pg, n(), "Team Check", "TeamCheck")
@@ -1676,11 +1714,13 @@ do
     Instance.new("UIStroke", inf).Color = T.Border; Instance.new("UIStroke", inf).Thickness = 1
     local cl = Instance.new("TextLabel", inf)
     cl.Size = UDim2.new(1, -16, 1, -8); cl.Position = UDim2.new(0, 8, 0, 4); cl.BackgroundTransparency = 1
-    cl.Text = PAINEL_NOME .. " — v5.5 Turbo\n\n"
+    cl.Text = PAINEL_NOME .. " — Xeno Compatível\n\n"
         .. "• Painel: " .. KEYS.Panel.Name .. "   • Aim: " .. KEYS.Aimbot.Name .. "\n"
         .. "• ESP: " .. KEYS.ESP.Name .. "   • Hitbox: " .. KEYS.Hitbox.Name .. "\n"
         .. "• Fly: " .. KEYS.Fly.Name .. "   • Noclip: " .. KEYS.Noclip.Name .. "\n\n"
-        .. "✔ Otimizado | ✔ Sem vazamento | ✔ Aimbot Liso"
+        .. "✔ SpeedHack via BodyVelocity\n"
+        .. "✔ Humanizer no Aimbot\n"
+        .. "✔ Nomes ofuscados (Anti-Detect)"
     cl.TextColor3 = T.TextDim; cl.TextSize = 11; cl.Font = Enum.Font.GothamBold
     cl.TextWrapped = true; cl.TextXAlignment = Enum.TextXAlignment.Left; cl.TextYAlignment = Enum.TextYAlignment.Top
 end
@@ -1745,6 +1785,7 @@ local function _cleanup()
     for pl, conn in pairs(_playerListeners) do pcall(function() conn:Disconnect() end) end
     _playerListeners = {}
     for char in pairs(_partCache) do _partCache[char] = nil end
+    if _speedBV and _speedBV.Parent then _speedBV:Destroy() end
     pcall(function() Root:Destroy() end)
     if type(getgenv) == "function" then getgenv()[_GKEY] = nil end
 end
@@ -1755,9 +1796,9 @@ LP.AncestryChanged:Connect(_cleanup)
 pcall(function()
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = PAINEL_NOME,
-        Text = "v5.5 Turbo - Aimbot Liso e Otimizado!",
+        Text = "v5.7 Anti-Detect carregado no Xeno!",
         Duration = 3,
     })
 end)
 
-print("[M7CPA] " .. PAINEL_NOME .. " v5.5 Turbo carregado com sucesso!")
+print("[M7CPA] " .. PAINEL_NOME .. " v5.7 Anti-Detect carregado com sucesso no Xeno!")
