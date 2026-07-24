@@ -68,15 +68,13 @@ local function safeDrawingNew(kind)
 end
 
 -- ── Serviços ───────────────────────────────────
-local Players     = game:GetService("Players")
-local Run         = game:GetService("RunService")
-local UIS         = game:GetService("UserInputService")
-local Tween       = game:GetService("TweenService")
-local CoreGui     = game:GetService("CoreGui")
-local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local Run     = game:GetService("RunService")
+local UIS     = game:GetService("UserInputService")
+local Tween   = game:GetService("TweenService")
 
-local VirtualUser = nil
-pcall(function() VirtualUser = game:GetService("VirtualUser") end)
+local CoreGui = nil
+pcall(function() CoreGui = game:GetService("CoreGui") end)
 
 local LP  = Players.LocalPlayer
 local Cam = workspace.CurrentCamera
@@ -85,16 +83,13 @@ local PGui = LP:FindFirstChildOfClass("PlayerGui")
               or LP:WaitForChild("PlayerGui", 3)
               or LP:WaitForChild("PlayerGui")
 
--- ── SafeParent (Xeno / Universal) ──────────────
-local SafeParent
+-- ── SafeParent (Anti-Detect Universal) ─────────
+local SafeParent = nil
 if type(gethui) == "function" then
-    local ok, r = pcall(gethui); if ok and r then SafeParent = r end
+    pcall(function() SafeParent = gethui() end)
 end
-if not SafeParent then
-    local ok = pcall(function()
-        local t = Instance.new("Folder"); t.Parent = CoreGui; t:Destroy()
-    end)
-    if ok then SafeParent = CoreGui end
+if not SafeParent and CoreGui then
+    SafeParent = CoreGui
 end
 if not SafeParent then SafeParent = PGui end
 
